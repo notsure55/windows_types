@@ -1,0 +1,14 @@
+[package]
+name = "windows_types"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+resolver = "3"
+members = [
+        "./windows_type",
+]
+
+[dependencies]
+anyhow = "1.0.104"
+windows_type = { path = "./windows_type/" }
