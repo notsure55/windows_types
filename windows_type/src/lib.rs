@@ -44,11 +44,32 @@ fn generate_trait(parsed: &DeriveInput) -> TokenStream {
                 if let Some(ref ident) = field.ident {
                     let get_ident = format_ident!("get_{}", ident);
                     let set_ident = format_ident!("set_{}", ident);
-                    let typ = &field.ty;
+                    let ty = &field.ty;
 
-                    quote! {
-                        fn #get_ident(&self) -> #typ;
-                        fn #set_ident(&mut self, #ident: #typ);
+                    let is_x32_only = find_attribute(&field.attrs, &format_ident!("x32"));
+                    let is_obj = find_attribute(&field.attrs, &format_ident!("obj"));
+
+                    // if the field is x32 only then we will make its getter optional return value
+                    if is_x32_only == true && is_obj == true {
+                        quote! {
+                            fn #get_ident(&self) -> Option<&dyn #ty>;
+                            fn #set_ident(&mut self, #ident: u32);
+                        }
+                    } else if is_x32_only == true {
+                        quote! {
+                            fn #get_ident(&self) -> Option<#ty>;
+                            fn #set_ident(&mut self, #ident: #ty);
+                        }
+                    } else if is_obj == true {
+                        quote! {
+                            fn #get_ident(&self) -> &dyn #ty;
+                            fn #set_ident(&mut self, #ident: u32);
+                        }
+                    } else {
+                        quote! {
+                            fn #get_ident(&self) -> #ty;
+                            fn #set_ident(&mut self, #ident: #ty);
+                        }
                     }
                 } else {
                     todo!("Handle non named fields");
@@ -83,7 +104,7 @@ pub fn windows_type(attr: TokenStream, input: TokenStream) -> TokenStream {
     }
 
     if args.contains(&Arch::X64) {
-        //tokens.extend(generate_x64(&parsed));
+        tokens.extend(generate_x64(&parsed, &trait_name));
     }
 
     tokens
@@ -94,32 +115,56 @@ fn generate_x64(parsed: &DeriveInput, trait_name: &Ident) -> TokenStream {
     let mut parsed = parsed.clone();
 
     if let Data::Struct(ref mut data) = parsed.data {
-        let new_fields: Vec<_> = data
+        let methods: Vec<_> = data
             .fields
-            .clone()
-            .into_iter()
-            .filter_map(|field| {
-                for attr in field.attrs.iter() {
-                    if attr.path().get_ident().unwrap() == &format_ident!("x32") {
-                        return None;
-                    }
-                }
-
-                Some(field)
-            })
-            .collect();
-
-        let methods: Vec<_> = new_fields
             .iter()
             .map(|field| {
                 if let Some(ref ident) = field.ident {
                     let get_ident = format_ident!("get_{}", ident);
                     let set_ident = format_ident!("set_{}", ident);
-                    let typ = &field.ty;
+                    let ty = &field.ty;
 
-                    quote! {
-                        fn #get_ident(&self, #ident: #typ) -> #typ;
-                        fn #set_ident(&mut self, #ident: #typ)
+                    let is_x32_only = find_attribute(&field.attrs, &format_ident!("x32"));
+                    let is_obj = find_attribute(&field.attrs, &format_ident!("obj"));
+
+                    if is_x32_only == true && is_obj == true {
+                        quote! {
+                            fn #get_ident(&self) -> Option<&dyn #ty> {
+                                None
+                            }
+                            fn #set_ident(&mut self, #ident: u32) {
+                                // silenetly does nothing
+                                let _ = #ident;
+                            }
+                        }
+                    } else if is_x32_only == true {
+                        quote! {
+                            fn #get_ident(&self) -> Option<#ty> {
+                                None
+                            }
+                            fn #set_ident(&mut self, #ident: #ty) {
+                                // silenetly does nothing
+                                let _ = #ident;
+                            }
+                        }
+                    } else if is_obj == true {
+                        quote! {
+                            fn #get_ident(&self) -> &dyn #ty {
+                                &self.#ident
+                            }
+                            fn #set_ident(&mut self, #ident: u32) {
+                                let _ = #ident;
+                            }
+                        }
+                    } else {
+                        quote! {
+                            fn #get_ident(&self) -> #ty {
+                                self.#ident
+                            }
+                            fn #set_ident(&mut self, #ident: #ty) {
+                                self.#ident = #ident;
+                            }
+                        }
                     }
                 } else {
                     todo!("Handle non named fields");
@@ -127,9 +172,28 @@ fn generate_x64(parsed: &DeriveInput, trait_name: &Ident) -> TokenStream {
             })
             .collect();
 
-        parsed.attrs = Vec::new();
+        let new_fields: Vec<_> = data
+            .fields
+            .clone()
+            .into_iter()
+            .filter_map(|mut field| {
+                for attr in field.attrs.iter() {
+                    if attr.path().get_ident().unwrap() == &format_ident!("x32") {
+                        return None;
+                    }
+                }
+
+                if find_attribute(&field.attrs, &format_ident!("obj")) {
+                    append_field_type(&mut field, "64");
+                    field.attrs = clear_attributes(field.attrs.clone(), &[format_ident!("obj")]);
+                }
+
+                Some(field)
+            })
+            .collect();
 
         let token_stream: TokenStream = quote! {
+            #[repr(C)]
             #[derive(Debug, Clone, Copy)]
             pub struct #name {
                 #(#new_fields),*
@@ -154,15 +218,57 @@ fn generate_x32(parsed: &DeriveInput, trait_name: &Ident) -> TokenStream {
         let methods: Vec<_> = data
             .fields
             .iter_mut()
-            .map(|field| {
-                field.attrs = clear_attributes(field.attrs.clone(), &format_ident!("x32"));
-
-                if let Some(ref ident) = field.ident {
+            .map(|mut field| {
+                if let Some(ident) = field.ident.clone() {
                     let get_ident = format_ident!("get_{}", ident);
                     let set_ident = format_ident!("set_{}", ident);
                     let ty = field.ty.clone();
 
-                    let tokens = if let Type::Path(ref mut typ) = field.ty {
+                    let is_x32_only = find_attribute(&field.attrs, &format_ident!("x32"));
+                    let is_obj = find_attribute(&field.attrs, &format_ident!("obj"));
+
+                    let tokens = if is_x32_only == true && is_obj == true {
+                        append_field_type(&mut field, "32");
+
+                        field.attrs = clear_attributes(
+                            field.attrs.clone(),
+                            &[format_ident!("obj"), format_ident!("x32")],
+                        );
+
+                        quote! {
+                            fn #get_ident(&self) -> Option<&dyn #ty> {
+                                Some(&self.#ident as _)
+                            }
+                            fn #set_ident(&mut self, #ident: u32) {
+                                let _ = #ident;
+                            }
+                        }
+                    } else if is_x32_only == true {
+                        field.attrs =
+                            clear_attributes(field.attrs.clone(), &[format_ident!("x32")]);
+
+                        quote! {
+                            fn #get_ident(&self) -> Option<#ty> {
+                                Some(self.#ident)
+                            }
+                            fn #set_ident(&mut self, #ident: #ty) {
+                                self.#ident = #ident;
+                            }
+                        }
+                    } else if is_obj == true {
+                        append_field_type(&mut field, "32");
+                        field.attrs =
+                            clear_attributes(field.attrs.clone(), &[format_ident!("obj")]);
+
+                        quote! {
+                            fn #get_ident(&self) -> &dyn #ty {
+                                &self.#ident as _
+                            }
+                            fn #set_ident(&mut self, #ident: u32) {
+                                let _ = #ident;
+                            }
+                        }
+                    } else if let Type::Path(ref mut typ) = field.ty {
                         if typ.path.segments[0].ident == format_ident!("u64") {
                             let tokens = quote! {
                                 fn #get_ident(&self) -> #ty {
@@ -186,7 +292,8 @@ fn generate_x32(parsed: &DeriveInput, trait_name: &Ident) -> TokenStream {
                                 }
                             }
                         }
-                    } else if let Type::Array(ref mut typ) = field.ty {
+                    } else {
+                        // TODO: make a good way to update arrays and other types that are bracketed <>
                         quote! {
                             fn #get_ident(&self) -> #ty {
                                 self.#ident as _
@@ -195,8 +302,6 @@ fn generate_x32(parsed: &DeriveInput, trait_name: &Ident) -> TokenStream {
                                 self.#ident = #ident;
                             }
                         }
-                    } else {
-                        todo!("implement checks for other types windows_type")
                     };
 
                     tokens
@@ -209,6 +314,7 @@ fn generate_x32(parsed: &DeriveInput, trait_name: &Ident) -> TokenStream {
         let fields = data.fields.iter();
 
         let token_stream: TokenStream = quote! {
+            #[repr(C)]
             #[derive(Debug, Clone, Copy)]
             pub struct #name {
                 #(#fields),*
@@ -226,9 +332,38 @@ fn generate_x32(parsed: &DeriveInput, trait_name: &Ident) -> TokenStream {
     }
 }
 
-fn clear_attributes(attrs: impl IntoIterator<Item = Attribute>, ident: &Ident) -> Vec<Attribute> {
+fn clear_attributes(
+    attrs: impl IntoIterator<Item = Attribute>,
+    idents: &[Ident],
+) -> Vec<Attribute> {
     attrs
         .into_iter()
-        .filter(|attr| attr.path().get_ident().unwrap() != ident)
+        .filter(|attr| idents.contains(attr.path().get_ident().unwrap()) != true)
         .collect()
+}
+
+fn find_attribute(attrs: &[Attribute], ident: &Ident) -> bool {
+    for attr in attrs.iter() {
+        if attr.path().get_ident().unwrap() == ident {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn replace_field_type(field: &mut Field, new_type: &Ident) {
+    if let Type::Path(ref mut typ) = field.ty {
+        typ.path.segments[0].ident = new_type.clone()
+    } else {
+        todo!("Implement more types for replacing type for field")
+    }
+}
+
+fn append_field_type(field: &mut Field, addon: &str) {
+    if let Type::Path(ref mut typ) = field.ty {
+        typ.path.segments[0].ident = format_ident!("{}{}", typ.path.segments[0].ident, addon);
+    } else {
+        todo!("Implement more types for replacing type for field")
+    }
 }

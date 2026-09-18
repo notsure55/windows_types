@@ -81,13 +81,12 @@ pub struct IMAGE_DATA_DIRECTORY {
     pub size: u32,
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[windows_type(x32, x64)]
 pub struct IMAGE_NT_HEADERS {
     pub signature: u32,
     pub file_header: IMAGE_FILE_HEADER,
-    //#[obj]
-    pub optional_header: IMAGE_OPTIONAL_HEADER32,
+    #[obj]
+    pub optional_header: IMAGE_OPTIONAL_HEADER,
 }
 
 #[repr(C)]
