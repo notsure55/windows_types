@@ -9,6 +9,16 @@ members = [
         "./windows_type",
 ]
 
+[package.metadata.wdk.driver-model]
+driver-type = "WDM"
+
+[features]
+kernel = ["dep:wdk-sys"]
+user = ["dep:windows_type"]
+
+[build-dependencies]
+wdk-build = "0.5.1"
+
 [dependencies]
-anyhow = "1.0.104"
-windows_type = { path = "./windows_type/" }
+wdk-sys = { version = "0.5.1", optional = true}
+windows_type = { path = "./windows_type/", optional = true }

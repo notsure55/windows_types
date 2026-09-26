@@ -1,6 +1,14 @@
+#![no_std]
+#![allow(dead_code)]
 use proc_macro::{TokenStream, TokenTree};
 use quote::{format_ident, quote};
 use syn::*;
+
+extern crate alloc;
+
+use crate::alloc::string::ToString;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Arch {
@@ -78,7 +86,7 @@ fn generate_trait(parsed: &DeriveInput) -> TokenStream {
             .collect();
 
         let token_stream: TokenStream = quote! {
-            pub trait #trait_name: std::fmt::Debug {
+            pub trait #trait_name: core::fmt::Debug {
                 #(#methods)*
             }
         }
