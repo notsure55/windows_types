@@ -6,19 +6,21 @@ edition = "2024"
 [workspace]
 resolver = "3"
 members = [
-        "./windows_type",
+        "./proc/user_type",
+        "./proc/kernel_type",
 ]
 
 [package.metadata.wdk.driver-model]
 driver-type = "WDM"
 
 [features]
-kernel = ["dep:wdk-sys"]
-user = ["dep:windows_type"]
+kernel = ["dep:wdk-sys", "dep:kernel_type"]
+user = ["dep:user_type"]
 
 [build-dependencies]
 wdk-build = "0.5.1"
 
 [dependencies]
 wdk-sys = { version = "0.5.1", optional = true}
-windows_type = { path = "./windows_type/", optional = true }
+user_type = { path = "./proc/user_type/", optional = true }
+kernel_type = { path = "./proc/kernel_type/", optional = true }

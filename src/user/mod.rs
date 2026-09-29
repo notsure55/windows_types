@@ -1,4 +1,4 @@
-use windows_type::windows_type;
+use user_type::windows_type;
 
 extern crate alloc;
 

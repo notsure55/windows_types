@@ -1,4 +1,8 @@
+extern crate alloc;
+
+use alloc::string::String;
 use core::convert::AsRef;
+use core::fmt::{Display, Formatter};
 use core::ops::{Deref, DerefMut};
 use wdk_sys::{PCWSTR, UNICODE_STRING};
 
@@ -47,6 +51,7 @@ macro_rules! wide {
     }};
 }
 
+#[derive(Debug)]
 pub struct UnicodeString(UNICODE_STRING);
 
 impl UnicodeString {
@@ -84,9 +89,21 @@ impl PartialEq for UnicodeString {
             false
         } else {
             unsafe {
-                core::slice::from_raw_parts(other.Buffer, other.Length.into())
-                    == core::slice::from_raw_parts(self.Buffer, self.Length.into())
+                core::slice::from_raw_parts(other.Buffer, usize::from(other.Length) / 2)
+                    == core::slice::from_raw_parts(self.Buffer, usize::from(self.Length) / 2)
             }
         }
+    }
+}
+
+impl Display for UnicodeString {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}",
+            String::from_utf16_lossy(unsafe {
+                core::slice::from_raw_parts(self.Buffer, usize::from(self.Length) / 2)
+            })
+        )
     }
 }
