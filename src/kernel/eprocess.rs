@@ -1,10 +1,45 @@
 use super::*;
-use wdk_sys::ntddk::IoGetCurrentProcess;
+
+extern crate alloc;
+
+use core::ffi::CStr;
+use wdk_sys::ntddk::{IoGetCurrentProcess, KeStackAttachProcess};
 
 impl Eprocess {
     pub fn from_current() -> Self {
         let raw = unsafe { IoGetCurrentProcess() }.cast::<EPROCESS>();
         Self { raw }
+    }
+    pub fn get_peb(&self) -> Option<&peb::PEB> {
+        self.attach_if_not();
+        unsafe { self.peb.as_ref() }
+    }
+    pub fn attach_if_not(&self) {
+        if self.raw != unsafe { IoGetCurrentProcess().cast::<EPROCESS>() } {
+            let mut kapc_state = _KAPC_STATE::default();
+            unsafe { KeStackAttachProcess(self.raw.cast::<_KPROCESS>(), &mut kapc_state) };
+        }
+    }
+    pub fn image_name<'a>(&'a self) -> Option<&'a str> {
+        Some(
+            CStr::from_bytes_until_nul(&self.image_file_name)
+                .ok()?
+                .to_str()
+                .ok()?,
+        )
+    }
+    pub fn next_process(&self) -> Self {
+        Self {
+            raw: unsafe {
+                self.pcb
+                    .process_list_entry
+                    .Flink
+                    .cast::<*mut LIST_ENTRY>()
+                    .read()
+                    .byte_offset(-0x110)
+                    .cast::<EPROCESS>()
+            },
+        }
     }
 }
 
@@ -50,6 +85,7 @@ pub struct KPROCESS {
     pub spare4: Uint4B,
     pub user_directory_table_base: Uint8B,
     pub address_policy: UChar,
+    pub spare2: [UChar; 7],
     pub instrumentation_callback: *mut Void,
     pub secure_state: Void,
     pub kernel_wait_time: Uint8B,
@@ -58,6 +94,7 @@ pub struct KPROCESS {
     pub per_processor_cycle_times: *mut Void,
     pub extended_feature_disable_mask: Uint8B,
     pub primary_group: Uint2B,
+    pub spare3: [Uint2B; 3],
     pub user_cet_logging: *mut Void,
     pub cpu_partition_list: _LIST_ENTRY,
     pub available_cpu_state: *mut _KPROCESS_AVAILABLE_CPU_STATE,
@@ -66,8 +103,9 @@ pub struct KPROCESS {
 #[repr(C, align(8))]
 #[derive(KernelType)]
 pub struct EPROCESS {
-    pub pcb: _KPROCESS,
-    pub process_lock: _EX_PUSH_LOCK,
+    pub pcb: KPROCESS,
+    pub padding: [u8; 0x118],
+    /*pub process_lock: _EX_PUSH_LOCK,
     pub unique_process_id: *mut Void,
     pub active_process_links: _LIST_ENTRY,
     pub rundown_protect: _EX_RUNDOWN_REF,
@@ -99,8 +137,8 @@ pub struct EPROCESS {
     pub working_set_watch: *mut _PAGEFAULT_HISTORY,
     pub win32_window_station: *mut Void,
     pub inherited_from_unique_process_id: *mut Void,
-    pub owner_process_id: Uint8B,
-    pub peb: peb::Peb,
+    pub owner_process_id: Uint8B,*/
+    pub peb: *mut peb::PEB,
     pub session: *mut _PSP_SESSION_SPACE,
     pub spare1: *mut Void,
     pub quota_block: *mut _EPROCESS_QUOTA_BLOCK,

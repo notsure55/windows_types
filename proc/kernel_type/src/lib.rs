@@ -1,6 +1,6 @@
-//#![no_std]
+#![no_std]
 #![allow(dead_code)]
-use proc_macro::{TokenStream, TokenTree};
+use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::*;
 
@@ -8,7 +8,6 @@ extern crate alloc;
 
 use crate::alloc::string::ToString;
 use alloc::string::String;
-use alloc::vec::Vec;
 
 fn from_snake_to_pascal_case(s: impl AsRef<str>) -> String {
     let mut capitalize = true;
@@ -46,9 +45,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
 fn generate_wrapper(name: Ident) -> TokenStream {
     let pascal_name_string = from_snake_to_pascal_case(name.to_string());
     let pascal_name = format_ident!("{}", pascal_name_string);
-    eprintln!("pascal = {:?} windows = {:?}", pascal_name, name);
+    //eprintln!("pascal = {:?} windows = {:?}", pascal_name, name);
 
     quote! {
+        #[repr(C)]
         pub struct #pascal_name {
             pub raw: *mut #name,
         }
@@ -76,40 +76,4 @@ fn generate_wrapper(name: Ident) -> TokenStream {
         }
     }
     .into()
-}
-
-fn clear_attributes(
-    attrs: impl IntoIterator<Item = Attribute>,
-    idents: &[Ident],
-) -> Vec<Attribute> {
-    attrs
-        .into_iter()
-        .filter(|attr| idents.contains(attr.path().get_ident().unwrap()) != true)
-        .collect()
-}
-
-fn find_attribute(attrs: &[Attribute], ident: &Ident) -> bool {
-    for attr in attrs.iter() {
-        if attr.path().get_ident().unwrap() == ident {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn replace_field_type(field: &mut Field, new_type: &Ident) {
-    if let Type::Path(ref mut typ) = field.ty {
-        typ.path.segments[0].ident = new_type.clone()
-    } else {
-        todo!("Implement more types for replacing type for field")
-    }
-}
-
-fn append_field_type(field: &mut Field, addon: &str) {
-    if let Type::Path(ref mut typ) = field.ty {
-        typ.path.segments[0].ident = format_ident!("{}{}", typ.path.segments[0].ident, addon);
-    } else {
-        todo!("Implement more types for replacing type for field")
-    }
 }

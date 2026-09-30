@@ -1,17 +1,19 @@
 use kernel_type::KernelType;
 use wdk_sys::*;
 
+extern crate alloc;
+
 pub mod eprocess;
 pub mod peb;
 pub mod unicode_string;
 
 use eprocess::*;
 
-pub type Void = core::ffi::c_void;
 pub type UChar = u8;
 pub type Uint2B = u16;
 pub type Uint4B = u32;
 pub type Uint8B = u64;
+pub type Void = Uint8B;
 pub type Char = i8;
 pub type Int4B = i32;
 pub type Int8B = i64;
@@ -22,7 +24,6 @@ pub type _KI_IDEAL_PROCESSOR_ASSIGNMENT_BLOCK = Void;
 pub type _KSTACK_COUNT = Void;
 pub type _KSCHEDULING_GROUP = Void;
 pub type _KPROCESS_AVAILABLE_CPU_STATE = Void;
-pub type _KPROCESS = KPROCESS;
 pub type _EX_PUSH_LOCK = Void;
 pub type _EX_FAST_REF = Void;
 pub type _ETHREAD = Void;

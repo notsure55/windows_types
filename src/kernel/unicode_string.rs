@@ -1,8 +1,8 @@
 extern crate alloc;
 
 use alloc::string::String;
+use alloc::string::ToString;
 use core::convert::AsRef;
-use core::fmt::{Display, Formatter};
 use core::ops::{Deref, DerefMut};
 use wdk_sys::{PCWSTR, UNICODE_STRING};
 
@@ -32,26 +32,23 @@ macro_rules! unicode_str_from_wide_ptr {
 
 #[macro_export]
 macro_rules! wide {
-    ($str: literal) => {{
-        extern crate alloc;
-
+    ($str: literal) => {
         concat!($str, "\0")
             .encode_utf16()
             .collect::<alloc::vec::Vec<u16>>()
             .as_ptr()
-    }};
-    ($str: expr) => {{
-        extern crate alloc;
-
+    };
+    ($str: expr) => {
         $str.encode_utf16()
             .into_iter()
             .chain(core::iter::once(0))
             .collect::<alloc::vec::Vec<u16>>()
             .as_ptr()
-    }};
+    };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[repr(C)]
 pub struct UnicodeString(UNICODE_STRING);
 
 impl UnicodeString {
@@ -66,6 +63,18 @@ impl UnicodeString {
     pub fn from_str(s: impl AsRef<str>) -> Self {
         let raw = unicode_str!(s.as_ref());
         Self { 0: raw }
+    }
+    pub fn contains(&self, other: &UnicodeString) -> bool {
+        let o = other.to_string();
+        let s = self.to_string();
+
+        s.contains(&o)
+    }
+    pub fn as_slice(&self) -> &[u16] {
+        unsafe { core::slice::from_raw_parts(self.Buffer, self.len()) }
+    }
+    pub fn len(&self) -> usize {
+        usize::from(self.Length) / 2
     }
 }
 
@@ -88,22 +97,14 @@ impl PartialEq for UnicodeString {
         if self.Length != other.Length {
             false
         } else {
-            unsafe {
-                core::slice::from_raw_parts(other.Buffer, usize::from(other.Length) / 2)
-                    == core::slice::from_raw_parts(self.Buffer, usize::from(self.Length) / 2)
-            }
+            unsafe { other.as_slice() == self.as_slice() }
         }
     }
 }
 
-impl Display for UnicodeString {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{}",
-            String::from_utf16_lossy(unsafe {
-                core::slice::from_raw_parts(self.Buffer, usize::from(self.Length) / 2)
-            })
-        )
+impl ToString for UnicodeString {
+    fn to_string(&self) -> String {
+        let slice = self.as_slice();
+        String::from_utf16_lossy(slice)
     }
 }

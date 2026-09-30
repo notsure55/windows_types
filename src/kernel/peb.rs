@@ -1,5 +1,7 @@
 use super::*;
 
+extern crate alloc;
+
 use super::unicode_string::UnicodeString;
 
 #[repr(C, align(8))]
