@@ -1,23 +1,79 @@
 use super::*;
 
 extern crate alloc;
+use super::result::Result;
+use crate::check_status;
 
+use alloc::{vec, vec::Vec};
+use core::cell::UnsafeCell;
+use core::convert::From;
 use core::ffi::CStr;
-use wdk_sys::ntddk::{IoGetCurrentProcess, KeStackAttachProcess};
+use wdk_sys::ntddk::{
+    IoGetCurrentProcess, KeStackAttachProcess, KeUnstackDetachProcess, MmCopyMemory,
+};
+
+#[repr(C)]
+pub struct Eprocess {
+    pub raw: *mut EPROCESS,
+    pub kapc_state: UnsafeCell<Option<_KAPC_STATE>>,
+}
+
+impl core::ops::Deref for Eprocess {
+    type Target = EPROCESS;
+
+    fn deref(&self) -> &Self::Target {
+        if let Some(raw) = unsafe { self.raw.as_ref() } {
+            raw
+        } else {
+            panic!(
+                "Pointer was null when trying to auto deref {:?}",
+                self.image_name()
+            );
+        }
+    }
+}
+
+impl core::ops::DerefMut for Eprocess {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        if let Some(raw) = unsafe { self.raw.as_mut() } {
+            raw
+        } else {
+            panic!(
+                "Pointer was null when trying to auto derefmut {:?}",
+                self.image_name()
+            );
+        }
+    }
+}
 
 impl Eprocess {
     pub fn from_current() -> Self {
         let raw = unsafe { IoGetCurrentProcess() }.cast::<EPROCESS>();
-        Self { raw }
+        Self {
+            raw,
+            kapc_state: UnsafeCell::new(None),
+        }
     }
     pub fn get_peb(&self) -> Option<&peb::PEB> {
-        self.attach_if_not();
+        if !self.is_attached() {
+            return None;
+        }
+
         unsafe { self.peb.as_ref() }
     }
-    pub fn attach_if_not(&self) {
-        if self.raw != unsafe { IoGetCurrentProcess().cast::<EPROCESS>() } {
-            let mut kapc_state = _KAPC_STATE::default();
-            unsafe { KeStackAttachProcess(self.raw.cast::<_KPROCESS>(), &mut kapc_state) };
+    pub fn is_attached(&self) -> bool {
+        self.raw != unsafe { IoGetCurrentProcess().cast::<EPROCESS>() }
+    }
+    pub fn attach(&self) {
+        let mut kapc_state = _KAPC_STATE::default();
+
+        unsafe { KeStackAttachProcess(self.raw.cast::<_KPROCESS>(), &mut kapc_state) };
+
+        unsafe { *self.kapc_state.get().as_mut_unchecked() = Some(kapc_state) }
+    }
+    pub fn detach(&self) {
+        if let Some(mut kapc_state) = unsafe { self.kapc_state.get().as_mut_unchecked().take() } {
+            unsafe { KeUnstackDetachProcess(&mut kapc_state) };
         }
     }
     pub fn image_name<'a>(&'a self) -> Option<&'a str> {
@@ -28,18 +84,38 @@ impl Eprocess {
                 .ok()?,
         )
     }
-    pub fn next_process(&self) -> Self {
-        Self {
-            raw: unsafe {
-                self.pcb
-                    .process_list_entry
-                    .Flink
-                    .cast::<*mut LIST_ENTRY>()
-                    .read()
-                    .byte_offset(-0x110)
-                    .cast::<EPROCESS>()
-            },
+    pub fn next_process(&mut self) {
+        self.raw = unsafe {
+            self.pcb
+                .process_list_entry
+                .Flink
+                .cast::<*mut LIST_ENTRY>()
+                .read()
+                .byte_offset(-0x110)
+                .cast::<EPROCESS>()
+        };
+    }
+    pub fn read_virtual_memory(&self, va: impl Into<PVOID>, size: usize) -> Result<Vec<u8>> {
+        if !self.is_attached() {
+            self.attach();
         }
+
+        let mut buffer = vec![0u8; size];
+        let mut number_of_bytes: u64 = Default::default();
+
+        check_status!(unsafe {
+            MmCopyMemory(
+                va.into(),
+                core::mem::transmute::<_, MM_COPY_ADDRESS>(buffer.as_ptr()),
+                size as _,
+                MM_COPY_MEMORY_VIRTUAL,
+                &mut number_of_bytes,
+            )
+        });
+
+        self.detach();
+
+        Result::Ok(buffer)
     }
 }
 
@@ -101,7 +177,6 @@ pub struct KPROCESS {
 }
 
 #[repr(C, align(8))]
-#[derive(KernelType)]
 pub struct EPROCESS {
     pub pcb: KPROCESS,
     pub padding: [u8; 0x118],

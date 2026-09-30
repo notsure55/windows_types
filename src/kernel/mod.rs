@@ -5,7 +5,9 @@ extern crate alloc;
 
 pub mod eprocess;
 pub mod peb;
+pub mod result;
 pub mod unicode_string;
+pub mod va;
 
 use eprocess::*;
 
