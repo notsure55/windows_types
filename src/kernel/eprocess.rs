@@ -5,7 +5,6 @@ use super::result::Result;
 use crate::check_status;
 
 use alloc::{vec, vec::Vec};
-use core::cell::UnsafeCell;
 use core::convert::From;
 use core::ffi::CStr;
 use wdk_sys::ntddk::{
@@ -15,7 +14,7 @@ use wdk_sys::ntddk::{
 #[repr(C)]
 pub struct Eprocess {
     pub raw: *mut EPROCESS,
-    pub kapc_state: UnsafeCell<Option<_KAPC_STATE>>,
+    pub kapc_state: Option<_KAPC_STATE>,
 }
 
 impl core::ops::Deref for Eprocess {
@@ -51,7 +50,13 @@ impl Eprocess {
         let raw = unsafe { IoGetCurrentProcess() }.cast::<EPROCESS>();
         Self {
             raw,
-            kapc_state: UnsafeCell::new(None),
+            kapc_state: None,
+        }
+    }
+    pub fn from_raw(raw: *mut EPROCESS) -> Self {
+        Self {
+            raw,
+            kapc_state: None,
         }
     }
     pub fn get_peb(&self) -> Option<&peb::PEB> {
@@ -62,17 +67,17 @@ impl Eprocess {
         unsafe { self.peb.as_ref() }
     }
     pub fn is_attached(&self) -> bool {
-        self.raw != unsafe { IoGetCurrentProcess().cast::<EPROCESS>() }
+        self.raw == unsafe { IoGetCurrentProcess().cast::<EPROCESS>() }
     }
-    pub fn attach(&self) {
+    pub fn attach(&mut self) {
         let mut kapc_state = _KAPC_STATE::default();
 
         unsafe { KeStackAttachProcess(self.raw.cast::<_KPROCESS>(), &mut kapc_state) };
 
-        unsafe { *self.kapc_state.get().as_mut_unchecked() = Some(kapc_state) }
+        self.kapc_state = Some(kapc_state);
     }
-    pub fn detach(&self) {
-        if let Some(mut kapc_state) = unsafe { self.kapc_state.get().as_mut_unchecked().take() } {
+    pub fn detach(&mut self) {
+        if let Some(mut kapc_state) = unsafe { self.kapc_state.take() } {
             unsafe { KeUnstackDetachProcess(&mut kapc_state) };
         }
     }
@@ -84,8 +89,8 @@ impl Eprocess {
                 .ok()?,
         )
     }
-    pub fn next_process(&mut self) {
-        self.raw = unsafe {
+    pub fn next_process(&self) -> Self {
+        Self::from_raw(unsafe {
             self.pcb
                 .process_list_entry
                 .Flink
@@ -93,20 +98,21 @@ impl Eprocess {
                 .read()
                 .byte_offset(-0x110)
                 .cast::<EPROCESS>()
-        };
+        })
     }
-    pub fn read_virtual_memory(&self, va: impl Into<PVOID>, size: usize) -> Result<Vec<u8>> {
+    pub fn read_virtual_memory(&mut self, va: impl Into<PVOID>, size: usize) -> Result<Vec<u8>> {
         if !self.is_attached() {
             self.attach();
-        }
+        };
 
+        let address = va.into();
         let mut buffer = vec![0u8; size];
         let mut number_of_bytes: u64 = Default::default();
 
         check_status!(unsafe {
             MmCopyMemory(
-                va.into(),
-                core::mem::transmute::<_, MM_COPY_ADDRESS>(buffer.as_ptr()),
+                buffer.as_ptr() as _,
+                core::mem::transmute::<_, MM_COPY_ADDRESS>(address),
                 size as _,
                 MM_COPY_MEMORY_VIRTUAL,
                 &mut number_of_bytes,
