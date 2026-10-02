@@ -1,6 +1,7 @@
 use super::*;
 
 #[repr(C)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct Va(pub usize);
 
 impl From<Va> for PVOID {

@@ -123,6 +123,33 @@ impl Eprocess {
 
         Result::Ok(buffer)
     }
+    pub fn write_virtual_memory(
+        &mut self,
+        va: impl Into<PVOID>,
+        size: usize,
+        buffer: *const u8,
+    ) -> Result<u64> {
+        if !self.is_attached() {
+            self.attach();
+        };
+
+        let address = va.into();
+        let mut number_of_bytes: u64 = Default::default();
+
+        check_status!(unsafe {
+            MmCopyMemory(
+                address,
+                core::mem::transmute::<_, MM_COPY_ADDRESS>(buffer),
+                size as _,
+                MM_COPY_MEMORY_VIRTUAL,
+                &mut number_of_bytes,
+            )
+        });
+
+        self.detach();
+
+        Result::Ok(number_of_bytes)
+    }
 }
 
 #[repr(C, align(8))]
